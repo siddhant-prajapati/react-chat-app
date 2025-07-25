@@ -11,3 +11,19 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+.container {
+  margin: auto;
+  width : '100%';
+}
+
+.login-form {
+  background-color: 'e2e2e2';
+}
+
+.center-container {
+  display: flex;
+  justify-content: center; /* horizontally */
+  align-items: center;     /* vertically */
+  height: 100vh;           /* full height of viewport */
+}
