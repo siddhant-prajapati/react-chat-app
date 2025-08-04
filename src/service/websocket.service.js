@@ -12,6 +12,7 @@ const maxReconnectAttempts = 5;
 let messageCallbacks = [];
 let connectionCallbacks = [];
 let errorCallbacks = [];
+let customEventCallbacks = new Map(); // For custom event listeners
 
 /**
  * Initialize and connect to WebSocket
@@ -208,7 +209,6 @@ export const sendTopicMessage = (topic, content, additionalData = {}) => {
     }
 };
 
-
 /**
  * Subscribe to a topic
  * @param {string} topic - Topic name to subscribe to
@@ -233,16 +233,99 @@ export const subscribeToTopic = (topic, callback) => {
 };
 
 /**
+ * Add custom event listener (simulates socket.on behavior)
+ * @param {string} eventName - Event name to listen for
+ * @param {Function} callback - Callback function
+ */
+export const addEventListener = (eventName, callback) => {
+    if (!customEventCallbacks.has(eventName)) {
+        customEventCallbacks.set(eventName, []);
+    }
+    customEventCallbacks.get(eventName).push(callback);
+    
+    return () => removeEventListener(eventName, callback);
+};
+
+/**
+ * Remove custom event listener
+ * @param {string} eventName - Event name
+ * @param {Function} callback - Callback function to remove
+ */
+export const removeEventListener = (eventName, callback) => {
+    if (customEventCallbacks.has(eventName)) {
+        const callbacks = customEventCallbacks.get(eventName);
+        const index = callbacks.indexOf(callback);
+        if (index > -1) {
+            callbacks.splice(index, 1);
+        }
+        if (callbacks.length === 0) {
+            customEventCallbacks.delete(eventName);
+        }
+    }
+};
+
+/**
+ * Trigger custom event listeners
+ * @param {string} eventName - Event name
+ * @param {*} data - Data to pass to listeners
+ */
+const triggerCustomEvent = (eventName, data) => {
+    if (customEventCallbacks.has(eventName)) {
+        customEventCallbacks.get(eventName).forEach(callback => {
+            try {
+                callback(data);
+            } catch (error) {
+                console.error(`Error in custom event callback for ${eventName}:`, error);
+            }
+        });
+    }
+};
+
+/**
  * Handle incoming private messages
  */
 const handleIncomingMessage = (message) => {
     console.log('📨 Received message:', message.body);
     try {
         const parsedMessage = JSON.parse(message.body);
-        notifyMessage(parsedMessage);
+        
+        // Transform message format to match ChatComponent expectations
+        const transformedMessage = {
+            message: parsedMessage.content || parsedMessage.message,
+            sender: parsedMessage.senderUsername || parsedMessage.sender,
+            receiver: parsedMessage.receiverUsername || parsedMessage.receiver || currentUser,
+            sendTime: parsedMessage.timestamp || parsedMessage.sendTime || new Date().toISOString(),
+            ...parsedMessage
+        };
+        
+        console.log('🔄 Transformed message:', transformedMessage);
+        
+        // Notify regular message callbacks (for useWebSocket hook)
+        notifyMessage(transformedMessage);
+        
+        // Trigger custom events that ChatComponent listens for
+        triggerCustomEvent('privateMessage', transformedMessage);
+        triggerCustomEvent('message', transformedMessage);
+        triggerCustomEvent('newMessage', transformedMessage);
+        
     } catch (error) {
         console.error('Error parsing incoming message:', error);
     }
+};
+
+/**
+ * Get socket instance (simulate socket-like interface for compatibility)
+ */
+export const getSocket = () => {
+    return {
+        on: addEventListener,
+        off: removeEventListener,
+        emit: (eventName, data) => {
+            console.warn('Socket emit not supported in STOMP implementation');
+        },
+        connected: () => connected,
+        disconnect: disconnect
+    };
 };
 
 /**
@@ -320,6 +403,7 @@ export const disconnect = () => {
     connecting = false;
     currentUser = null;
     reconnectAttempts = 0;
+    customEventCallbacks.clear();
     notifyConnection(false, 'Manually disconnected');
 };
 
@@ -330,6 +414,7 @@ export const clearAllCallbacks = () => {
     messageCallbacks = [];
     connectionCallbacks = [];
     errorCallbacks = [];
+    customEventCallbacks.clear();
 };
 
 /**
@@ -395,7 +480,10 @@ const webSocketService = {
     clearAllCallbacks,
     isConnected,
     isConnecting,
-    getCurrentUser
+    getCurrentUser,
+    getSocket, // Add this for socket access
+    addEventListener,
+    removeEventListener
 };
 
 export default webSocketService;

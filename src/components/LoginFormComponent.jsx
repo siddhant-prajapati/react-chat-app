@@ -43,7 +43,7 @@ const FormComponent = () => {
             if (response.status === 200) {
                 localStorage.setItem('token', token);
             }
-            const user = await getLoginUser(token);
+            const user = await getLoginUser(token, navigate);
             await connect(user.username);
 			console.log("Connected successfully")
         } catch (error) {
@@ -68,7 +68,7 @@ const FormComponent = () => {
             borderRadius: '30px',
             }}
         >
-            <Snackbar open={open} autoHideDuration={3000} onClose={handleClose}>
+            <Snackbar open={open} autoHideDuration={3000} onClose={handleClose} anchorOrigin={{vertical: 'top', horizontal: 'right'}}>
                 <Alert
                     onClose={handleClose}
                     severity={alertInfo.severity}

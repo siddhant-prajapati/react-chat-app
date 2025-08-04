@@ -28,102 +28,55 @@ export const users = [
 }
 ];
 
-export const getLoginUser = async (token) => {
-try {
-    const url = chatAppBaseUrl + '/api/users/login';
-    const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-        Authorization: `Bearer ${token}`,
-    },
-    });
+const makeRequest = async ({ url, method = 'GET', token, body, navigate }) => {
+    try {
+        const response = await fetch(url, {
+            method,
+            headers: {
+                'Content-Type': body ? 'application/json' : undefined,
+                Authorization: `Bearer ${token}`,
+            },
+            body: body ? JSON.stringify(body) : undefined,
+        });
 
-    if (response.ok) { // response.status in 200-299
-    const data = await response.json();
-    return data;
-    } else {
-    console.log('Unable to get login User', response.status, response.statusText);
+        if (response.ok) {
+            return await response.json();
+        } else if (response.status === 403) {
+            console.warn('403 Forbidden - Redirecting To /');
+            navigate('/')
+            return;
+        } else {
+            console.error(`Request failed: ${url}`, response.status, response.statusText);
+        }
+    } catch (error) {
+        console.error(`Network error for ${url}:`, error);
     }
-} catch (error) {
-    console.error('Get login User api not working:', error);
-}
 };
 
+// Get logged-in user info
+export const getLoginUser = (token, navigate) => {
+    const url = `${chatAppBaseUrl}/api/users/login`;
+    return makeRequest({ url, token, navigate });
+};
 
-export const getUserByUsernameKeyword = async (token, usernameKeyword) => {
-try {
+// Search users by username keyword
+export const getUserByUsernameKeyword = (token, usernameKeyword, navigate) => {
     const url = `${chatAppBaseUrl}/api/users/username/${usernameKeyword}`;
-    const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-        Authorization: `Bearer ${token}`,
-    },
-    });
-
-    if (response.ok) {
-    const data = await response.json();
-    return data;
-    } else {
-    console.log('Unable to get Users by username keyword', response.status, response.statusText);
-    }
-} catch (error) {
-    console.error('Get Users by username keyword api not working:', error);
-}
+    return makeRequest({ url, token, navigate });
 };
 
-
-export const makeFriend = async (token, currentUserId, loginUserId) => {
-    const friend = {
+// Make a friend connection
+export const makeFriend = (token, currentUserId, loginUserId, navigate) => {
+    const url = `${chatAppBaseUrl}/api/friends`;
+    const body = {
         user: { id: loginUserId },
         friend: { id: currentUserId }
     };
-
-    try {
-        const url = `${chatAppBaseUrl}/api/friends`;
-        const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json', // important!
-            Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(friend), // ✅ send as JSON string
-        });
-
-        console.log("Create friend response:", response);
-
-        if (response.ok) {
-        const data = await response.json();
-        return data;
-        } else {
-        console.log('Unable to create friend', response.status, response.statusText);
-        }
-    } catch (error) {
-        console.error('makeFriend API error:', error);
-    }
+    return makeRequest({ url, method: 'POST', token, body, navigate });
 };
 
-
-
-export const getFriendsByUserId = async (token, userId) => {
-    try {
-        const url = `${chatAppBaseUrl}/api/friends/${userId}`;
-        const response = await fetch(url, {
-            method: 'GET',
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            return data;
-        } else {
-            console.log('Unable to get friends of login User', response.status, response.statusText);
-        }
-    } catch (error) {
-        console.error('Get Friends User api not working:', error);
-    }
-}
-
-
-    
+// Get friends of a user
+export const getFriendsByUserId = (token, userId, navigate) => {
+    const url = `${chatAppBaseUrl}/api/friends/${userId}`;
+    return makeRequest({ url, token, navigate });
+};

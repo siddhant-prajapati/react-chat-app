@@ -28,7 +28,7 @@ const Header = () => {
 	const makeUserFriend = async () => {
 		
 		const selectedUser = await getUserByUsernameKeyword(token ,userName);
-		const loginUser = await getLoginUser(token);
+		const loginUser = await getLoginUser(token, navigate);
 		console.log(selectedUser[0])
 		console.log(loginUser)
 		if (selectedUser?.length === 1) {
@@ -39,6 +39,11 @@ const Header = () => {
 		} else {
 			console.log("Enter valid username", userName);
 		}
+	}
+
+	const logOutUser = () => {
+		localStorage.removeItem('token');
+		navigate('/')
 	}
 
 	return (
@@ -96,7 +101,7 @@ const Header = () => {
 			<Send size={20}/>&nbsp;
 		</button>
 		
-		<Button variant="outlined" color="error" onClick={() => navigate('/')}>
+		<Button variant="outlined" color="error" onClick={logOutUser}>
 			Logout
 		</Button>
 		</Box>

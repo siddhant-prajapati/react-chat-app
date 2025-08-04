@@ -16,9 +16,11 @@ export const useWebSocket = (currentUser, options = {}) => {
     const messageCallbackRef = useRef(null);
     const connectionCallbackRef = useRef(null);
     const errorCallbackRef = useRef(null);
+    const customMessageListenersRef = useRef(new Map());
 
     // Message callback
     const handleMessage = useCallback((message) => {
+        console.log("📨 useWebSocket received message:", message);
         setMessages(prev => [...prev, message]);
     }, []);
 
@@ -85,8 +87,42 @@ export const useWebSocket = (currentUser, options = {}) => {
         }
     }, []);
 
+    // Add custom message listener (compatible with STOMP)
+    const addMessageListener = useCallback((eventName, callback) => {
+        try {
+            const cleanup = webSocketService.addEventListener(eventName, callback);
+            // Store reference for cleanup
+            const key = `${eventName}_${Date.now()}_${Math.random()}`;
+            customMessageListenersRef.current.set(key, { eventName, callback, cleanup });
+            return cleanup;
+        } catch (err) {
+            setError(err.message);
+        }
+    }, []);
+
+    // Remove custom message listener
+    const removeMessageListener = useCallback((eventName, callback) => {
+        try {
+            webSocketService.removeEventListener(eventName, callback);
+        } catch (err) {
+            setError(err.message);
+        }
+    }, []);
+
+    // Get socket instance (returns socket-like interface)
+    const getSocket = useCallback(() => {
+        return webSocketService.getSocket();
+    }, []);
+
     // Disconnect
     const disconnect = useCallback(() => {
+        // Clean up custom listeners
+        customMessageListenersRef.current.forEach(({ cleanup }) => {
+            if (cleanup && typeof cleanup === 'function') {
+                cleanup();
+            }
+        });
+        customMessageListenersRef.current.clear();
         webSocketService.disconnect();
     }, []);
 
@@ -97,17 +133,19 @@ export const useWebSocket = (currentUser, options = {}) => {
 
     // Filter messages by receiver (like your original requirement)
     const getMessagesByReceiver = useCallback((receiverUsername) => {
-        return messages.filter(msg => msg.receiverUsername === receiverUsername);
+        return messages.filter(msg => msg.receiverUsername === receiverUsername || msg.receiver === receiverUsername);
     }, [messages]);
 
     // Filter messages by sender
     const getMessagesBySender = useCallback((senderUsername) => {
-        return messages.filter(msg => msg.senderUsername === senderUsername);
+        return messages.filter(msg => msg.senderUsername === senderUsername || msg.sender === senderUsername);
     }, [messages]);
 
     // Get conversation between two users
     const getConversation = useCallback((otherUsername) => {
         return messages.filter(msg => 
+            (msg.sender === currentUser && msg.receiver === otherUsername) ||
+            (msg.sender === otherUsername && msg.receiver === currentUser) ||
             (msg.senderUsername === currentUser && msg.receiverUsername === otherUsername) ||
             (msg.senderUsername === otherUsername && msg.receiverUsername === currentUser)
         );
@@ -120,7 +158,7 @@ export const useWebSocket = (currentUser, options = {}) => {
         connectionCallbackRef.current = handleConnectionChange;
         errorCallbackRef.current = handleError;
 
-        // Add callbacks to service
+        // Add callbacks to service - these will receive messages from STOMP
         webSocketService.onMessage(handleMessage);
         webSocketService.onConnectionChange(handleConnectionChange);
         webSocketService.onError(handleError);
@@ -129,6 +167,7 @@ export const useWebSocket = (currentUser, options = {}) => {
         const status = webSocketService.getConnectionStatus();
         setConnected(status.connected);
         setConnecting(status.connecting);
+        setConnectionStatus(status.connected ? 'Connected' : 'Disconnected');
 
         // Auto-connect if user is provided
         if (currentUser && !status.connected && !status.connecting) {
@@ -137,9 +176,18 @@ export const useWebSocket = (currentUser, options = {}) => {
 
         // Cleanup on unmount
         return () => {
-            webSocketService.offMessage(messageCallbackRef.current);
-            webSocketService.offConnectionChange(connectionCallbackRef.current);
-            webSocketService.offError(errorCallbackRef.current);
+            // Clean up custom listeners
+            customMessageListenersRef.current.forEach(({ cleanup }) => {
+                if (cleanup && typeof cleanup === 'function') {
+                    cleanup();
+                }
+            });
+            customMessageListenersRef.current.clear();
+
+            // Remove service callbacks
+            webSocketService.offMessage(handleMessage);
+            webSocketService.offConnectionChange(handleConnectionChange);
+            webSocketService.offError(handleError);
         };
     }, [currentUser, connect, handleMessage, handleConnectionChange, handleError]);
 
@@ -162,6 +210,12 @@ export const useWebSocket = (currentUser, options = {}) => {
         disconnect,
         sendPrivateMessage,
         sendTopicMessage,
-        subscribeToTopic
+        subscribeToTopic,
+        
+        // Advanced usage (socket-like interface)
+        socket: getSocket(), // Returns socket-like object
+        addMessageListener,
+        removeMessageListener,
+        getSocket
     };
 };
