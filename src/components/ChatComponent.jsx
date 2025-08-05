@@ -10,24 +10,24 @@ const ChatComponent = (props) => {
 	const [selectedUserId, setSelectedUserId] = useState(-1);
 	const [newMessage, setNewMessage] = useState("");
 	const [friends, setFriends] = useState([]);
-	const [messages, setMessages] = useState([]);
 	const [lastMessageMap, setLastMessageMap] = useState({});
 
 	const navigate = useNavigate();
 
+	// Use messages directly from useWebSocket hook - NO separate messages state
 	const { 
+		messages: allMessages, // All messages from WebSocket
 		sendPrivateMessage, 
-		addMessageListener, 
-		removeMessageListener,
-		connected 
+		connected,
+		clearMessages,
+		loadMessages // NEW: Function to load initial messages
 	} = useWebSocket(props.loginUser?.username);
 
 	const avatarUrl = process.env.REACT_APP_IMAGE_URL;
 
-	// convert iso datatime to time
+	// Convert ISO datetime to time
 	const getFormattedTime = (isoString) => {
 		const date = new Date(isoString);
-
 		const formattedTime = date.toLocaleTimeString('en-US', {
 			hour: '2-digit',
 			minute: '2-digit',
@@ -39,137 +39,151 @@ const ChatComponent = (props) => {
 	let selectedUser = friends.filter(f => f.id === selectedUserId)[0];
 	const token = localStorage.getItem('token');
 
+	// Get messages for the currently selected chat
+	const getCurrentChatMessages = () => {
+		if (selectedUserId === -1 || !selectedUser) return [];
+		
+		return allMessages.filter(msg => {
+			const senderName = msg.sender || msg.senderUsername;
+			const receiverName = msg.receiver || msg.receiverUsername;
+			
+			// Message is part of current chat if:
+			// 1. Current user sent to selected user, OR
+			// 2. Selected user sent to current user
+			return (
+				(senderName === props.loginUser.username && receiverName === selectedUser.username) ||
+				(senderName === selectedUser.username && receiverName === props.loginUser.username)
+			);
+		});
+	};
+
+	// Get current chat messages
+	const currentChatMessages = getCurrentChatMessages();
+
+	// Set last message of each friend and load ALL past messages on component mount
 	useEffect(() => {
-		const fetchFriends = async () => {
+		const fetchFriendsAndMessages = async () => {
 			const ufs = await getFriendsByUserId(token, props.loginUser.id, navigate);
 			setFriends(ufs);
-			console.log(avatarUrl);
+			console.log("Friends loaded:", ufs.length);
 			
-			// Fetch last message for each friend
+			// Fetch last message for each friend AND load all historical messages
 			const lastMessages = {};
+			const allHistoricalMessages = [];
+			
 			for (const friend of ufs) {
 				try {
 					const messages = await getMessageBetweenTwoUsers(token, props.loginUser.id, friend.id);
+					console.log(`Loaded ${messages.length} messages with friend ${friend.firstName}`);
+					
 					if (messages && messages.length > 0) {
+						// Store last message for friend list display
 						const lastMessage = messages[messages.length - 1];
 						lastMessages[friend.id] = lastMessage;
+						
+						// Collect all messages to load into WebSocket state
+						allHistoricalMessages.push(...messages);
 					}
 				} catch (error) {
 					console.error(`Error fetching messages for friend ${friend.id}:`, error);
 				}
 			}
+			
+			// Load all historical messages into WebSocket state at once
+			if (allHistoricalMessages.length > 0) {
+				console.log("Loading all historical messages into WebSocket state:", allHistoricalMessages.length);
+				loadMessages(allHistoricalMessages);
+			}
+			
 			setLastMessageMap(lastMessages);
 		}
-		fetchFriends();
-	},[props.loginUser.id])
-
-	// Listen for incoming messages via WebSocket
-	useEffect(() => {
-		if (!connected) {
-			console.log("WebSocket not connected, skipping message listeners");
-			return;
+		
+		if (props.loginUser?.id) {
+			fetchFriendsAndMessages();
 		}
+	}, [props.loginUser.id, loadMessages]);
 
-		console.log("Setting up message listeners...");
-
-		const handleIncomingMessage = (messageData) => {
-			console.log("📨 ChatComponent received message:", messageData);
-			
-			// Determine if this message is relevant to current chat
-			const senderName = messageData.sender || messageData.senderUsername;
-			const receiverName = messageData.receiver || messageData.receiverUsername;
-			const senderId = friends.find(f => f.username === senderName)?.id;
-			const receiverId = friends.find(f => f.username === receiverName)?.id;
-			
-			console.log("Message details:", { senderName, receiverName, senderId, receiverId, selectedUserId });
-			
-			// Update messages if the current chat is with the sender or receiver
-			if (selectedUserId !== -1) {
-				if (senderId === selectedUserId || senderName === props.loginUser.username) {
-					console.log("✅ Adding message to current chat");
-					setMessages(prev => {
-						// Avoid duplicates by checking if message already exists
-						const exists = prev.some(msg => 
-							msg.message === messageData.message && 
-							(msg.sender === senderName || msg.senderUsername === senderName) && 
-							Math.abs(new Date(msg.sendTime || msg.timestamp) - new Date(messageData.sendTime || messageData.timestamp)) < 1000
-						);
-						if (!exists) {
-							return [...prev, messageData];
-						}
-						console.log("⚠️ Duplicate message detected, skipping");
-						return prev;
-					});
-				} else {
-					console.log("Message not for current chat, skipping display");
-				}
-			} else {
-				console.log("No chat selected, not displaying message");
-			}
-
-			// Update last message map for friend list
-			if (senderId || receiverId) {
-				const chatPartnerId = senderName === props.loginUser.username ? receiverId : senderId;
-				if (chatPartnerId) {
-					console.log("📝 Updating last message for friend:", chatPartnerId);
-					setLastMessageMap(prev => ({
-						...prev,
-						[chatPartnerId]: messageData
-					}));
-				}
-			}
-		};
-
-		// Add listeners for different message events (STOMP compatible)
-		console.log("Adding message event listeners...");
-		const cleanup1 = addMessageListener('privateMessage', handleIncomingMessage);
-		const cleanup2 = addMessageListener('message', handleIncomingMessage);
-		const cleanup3 = addMessageListener('newMessage', handleIncomingMessage);
-
-		return () => {
-			console.log("Cleaning up message listeners...");
-			cleanup1 && cleanup1();
-			cleanup2 && cleanup2();
-			cleanup3 && cleanup3();
-		};
-	}, [connected, selectedUserId, friends, props.loginUser.username, addMessageListener]);
-
+	// Update last message map when allMessages changes
 	useEffect(() => {
-		console.log("Updated friends list:", friends);
-	}, [friends]);
-
-	useEffect(() => {
-		console.log("Change in messages", messages)
-	}, [messages])
-
-	const getMessages = async (userId1, userId2) => {
-		try {
-			const response = await getMessageBetweenTwoUsers(token, userId1, userId2);
-			console.log("new messages", response);
-			setMessages(response);
+		console.log("📊 All messages updated:", allMessages.length);
+		
+		// Update last message map based on current messages
+		if (friends.length > 0 && allMessages.length > 0) {
+			const updatedLastMessages = { ...lastMessageMap };
 			
-				// Update last message map
-				if (response.length > 0) {
-					const lastMsg = response[response.length - 1];
-					setLastMessageMap(prev => ({
-						...prev,
-						[userId2]: lastMsg
-					}));
+			friends.forEach(friend => {
+				// Find the most recent message with this friend
+				const messagesWithFriend = allMessages.filter(msg => {
+					const senderName = msg.sender || msg.senderUsername;
+					const receiverName = msg.receiver || msg.receiverUsername;
+					
+					return (
+						(senderName === props.loginUser.username && receiverName === friend.username) ||
+						(senderName === friend.username && receiverName === props.loginUser.username)
+					);
+				});
+				
+				if (messagesWithFriend.length > 0) {
+					// Get the most recent message
+					const lastMessage = messagesWithFriend[messagesWithFriend.length - 1];
+					updatedLastMessages[friend.id] = lastMessage;
 				}
-		} catch (error) {
-			console.error("Error fetching messages:", error);
+			});
+			
+			setLastMessageMap(updatedLastMessages);
 		}
-	}
+	}, [allMessages, friends, props.loginUser.username]);
 
+	// Load initial messages when selecting a user
 	const handleUserClick = async (selectedUserId) => {
 		setSelectedUserId(selectedUserId);
-		console.log('selected user', selectedUserId);
+		console.log('Selected user:', selectedUserId);
+		
+		const selectedFriend = friends.find(f => f.id === selectedUserId);
+		if (!selectedFriend) {
+			console.error("Selected friend not found");
+			return;
+		}
+		
 		const loginUserId = props.loginUser.id;
-		console.log(`Selected userId : ${selectedUserId} , Login userId : ${loginUserId}`);
+		console.log(`Selected userId: ${selectedUserId}, Login userId: ${loginUserId}`);
 
-		await getMessages(loginUserId, selectedUserId);
-		console.log('Messages', messages)
-		console.log("Selected User", selectedUser)
+		// Check if we already have messages for this conversation in our WebSocket state
+		const existingMessages = allMessages.filter(msg => {
+			const senderName = msg.sender || msg.senderUsername;
+			const receiverName = msg.receiver || msg.receiverUsername;
+			
+			return (
+				(senderName === props.loginUser.username && receiverName === selectedFriend.username) ||
+				(senderName === selectedFriend.username && receiverName === props.loginUser.username)
+			);
+		});
+
+		// Only fetch from database if we don't have messages for this conversation
+		if (existingMessages.length === 0) {
+			console.log("No existing messages found, fetching from database...");
+			try {
+				const historicalMessages = await getMessageBetweenTwoUsers(token, loginUserId, selectedUserId);
+				console.log("Historical messages loaded from database:", historicalMessages.length);
+				
+				if (historicalMessages && historicalMessages.length > 0) {
+					// Load messages into the WebSocket hook's state
+					loadMessages(historicalMessages);
+					
+					// Update last message map with the most recent message
+					const lastMsg = historicalMessages[historicalMessages.length - 1];
+					setLastMessageMap(prev => ({
+						...prev,
+						[selectedUserId]: lastMsg
+					}));
+				}
+				
+			} catch (error) {
+				console.error("Error fetching historical messages from database:", error);
+			}
+		} else {
+			console.log(`Found ${existingMessages.length} existing messages for this conversation`);
+		}
 	};
 
 	const handleSendMessage = async () => {
@@ -178,27 +192,11 @@ const ChatComponent = (props) => {
 				const msgText = newMessage.trim();
 				const receiverUsername = selectedUser.username.trim();
 
-				// Create message object
-				const newMsg = {
-					message: msgText,
-					sender: props.loginUser.username,
-					receiver: receiverUsername,
-					sendTime: new Date().toISOString(),
-				};
-
-				// Send via WebSocket
-				sendPrivateMessage(receiverUsername, msgText);
-				console.log("Sending message:", newMessage);
-				setNewMessage("");
-
-				// Optimistically add message to UI
-				setMessages(prev => [...prev, newMsg]);
+				console.log("Sending message:", msgText, "to:", receiverUsername);
 				
-				// Update last message map
-				setLastMessageMap(prev => ({
-					...prev,
-					[selectedUserId]: newMsg
-				}));
+				// Send via WebSocket - this will automatically add to allMessages via the hook
+				sendPrivateMessage(receiverUsername, msgText);
+				setNewMessage("");
 
 			} catch (error) {
 				console.error('❌ Failed to send message:', error);
@@ -218,134 +216,143 @@ const ChatComponent = (props) => {
 		return lastMessageMap[friendId] || null;
 	};
 
+	// Debug logging
+	useEffect(() => {
+		console.log("📊 Current chat messages:", currentChatMessages.length);
+	}, [currentChatMessages]);
+
+	useEffect(() => {
+		console.log("📊 Connection status:", connected);
+	}, [connected]);
+
 	return (
-	<div className="chat-container">
-		{/* Connection Status Indicator */}
-		{!connected && (
-			<div className="connection-status">
-				<span style={{color: 'red'}}>● Disconnected</span>
+		<div className="chat-container">
+			{/* Connection Status Indicator */}
+			{!connected && (
+				<div className="connection-status">
+					<span style={{color: 'red'}}>● Disconnected</span>
+				</div>
+			)}
+			
+			{/* Users List */}
+			<div className="users-list">
+				<div className="chat-header">
+					<h2>Chats</h2>
+				</div>
+				
+				<div className="users-scroll">
+					{friends.map((user, index) => {
+						const lastMessage = getLastMessageForFriend(user.id);
+						return (
+							<div 
+								key={index} 
+								onClick={() => handleUserClick(user.id)}
+								className={`user-item ${selectedUserId === user.id ? 'selected' : ''}`}
+							>
+								<div className="user-info">
+									<img 
+										src={avatarUrl + user.firstName} 
+										alt={user.firstName}
+										className="user-avatar"
+									/>
+									<div className="user-details">
+										<div className="user-header">
+											<h3 className="user-name">{user.firstName}</h3>
+											<span className="message-time">
+												{lastMessage ? getFormattedTime(lastMessage.sendTime || lastMessage.timestamp) : ''}
+											</span>
+										</div>
+										<p className="last-message">
+											{lastMessage ? lastMessage.message : 'No messages yet'}
+										</p>
+									</div>
+								</div>
+							</div>
+						);
+					})}
+				</div>
 			</div>
-		)}
-		
-		{/* Users List */}
-		<div className="users-list">
-		<div className="chat-header">
-			<h2>Chats </h2>
-		</div>
-		
-		<div className="users-scroll">
-			{friends.map((user, index) => {
-				const lastMessage = getLastMessageForFriend(user.id);
-				return (
-				<div 
-					key={index} 
-					onClick={() => handleUserClick(user.id)}
-					className={`user-item ${selectedUserId === user.id ? 'selected' : ''}`}
-				>
-					<div className="user-info">
-					<img 
-						src={avatarUrl+user.firstName} 
-						alt={user.firstName}
-						className="user-avatar"
-					/>
-					<div className="user-details">
-						<div className="user-header">
-						<h3 className="user-name">{user.firstName}</h3>
-						<span className="message-time">
-							{lastMessage ? getFormattedTime(lastMessage.sendTime) : ''}
-						</span>
+
+			{/* Chat Area */}
+			<div className="chat-area">
+				{selectedUser ? (
+					<>
+						{/* Chat Header */}
+						<div className="selected-chat-header">
+							<div className="selected-user-info">
+								<img 
+									src={avatarUrl + selectedUser.firstName} 
+									alt={selectedUser.firstName}
+									className="selected-user-avatar"
+								/>
+								<div className="selected-user-details">
+									<h3 className="selected-user-name">{selectedUser.firstName}</h3>
+									<p className="user-status">{selectedUser.lastSeen}</p>
+								</div>
+							</div>
+							<div className="chat-actions">
+								<button className="action-btn">
+									<Video size={20} />
+								</button>
+								<button className="action-btn">
+									<Phone size={20} />
+								</button>
+								<button className="action-btn">
+									<MoreHorizontal size={20} />
+								</button>
+							</div>
 						</div>
-						<p className="last-message">
-						{lastMessage ? lastMessage.message : 'No messages yet'}
-						</p>
-					</div>
-					</div>
-				</div>
-				);
-			})}
-		</div>
-		</div>
 
-		{/* Chat Area */}
-		<div className="chat-area">
-		{selectedUser ? (
-			<>
-			{/* Chat Header */}
-			<div className="selected-chat-header">
-				<div className="selected-user-info">
-				<img 
-					src={avatarUrl+selectedUser.firstName} 
-					alt={selectedUser.firstName}
-					className="selected-user-avatar"
-				/>
-				<div className="selected-user-details">
-					<h3 className="selected-user-name">{selectedUser.firstName}</h3>
-					<p className="user-status">{selectedUser.lastSeen}</p>
-				</div>
-				</div>
-				<div className="chat-actions">
-				<button className="action-btn">
-					<Video size={20} />
-				</button>
-				<button className="action-btn">
-					<Phone size={20} />
-				</button>
-				<button className="action-btn">
-					<MoreHorizontal size={20} />
-				</button>
-				</div>
-			</div>
-
-			{/* Messages */}
-			<div className="messages-area">
-				<div className="messages-container">
-				{messages.map((msg, index) => (
-					<div 
-						key={index} 
-						className={`message-wrapper ${msg.sender === props.loginUser.username ? 'sent' : 'received'}`}
-					>
-					<div className="message-bubble">
-						<div className={`message ${msg.sender===props.loginUser.username ? 'message-sent' : 'message-received'}`}>
-						<p className="message-text">{msg.message}</p>
-						<p className="message-timestamp">{getFormattedTime(msg.sendTime || msg.timestamp)}</p>
+						{/* Messages */}
+						<div className="messages-area">
+							<div className="messages-container">
+								{currentChatMessages.map((msg, index) => (
+									<div 
+										key={index} 
+										className={`message-wrapper ${(msg.sender || msg.senderUsername) === props.loginUser.username ? 'sent' : 'received'}`}
+									>
+										<div className="message-bubble">
+											<div className={`message ${(msg.sender || msg.senderUsername) === props.loginUser.username ? 'message-sent' : 'message-received'}`}>
+												<p className="message-text">{msg.message}</p>
+												<p className="message-timestamp">{getFormattedTime(msg.sendTime || msg.timestamp)}</p>
+											</div>
+											<div className={`message-tail ${(msg.sender || msg.senderUsername) === props.loginUser.username ? 'tail-sent' : 'tail-received'}`}></div>
+										</div>
+									</div>
+								))}
+							</div>
 						</div>
-						<div className={`message-tail ${msg.sender===props.loginUser.username ? 'tail-sent' : 'tail-received'}`}></div>
-					</div>
-					</div>
-				))}
-				</div>
-			</div>
 
-			{/* Message Input */}
-			<div className="input-area">
-				<input
-				type="text"
-				placeholder="Type a message..."
-				value={newMessage}
-				onChange={(e) => setNewMessage(e.target.value)}
-				onKeyPress={handleKeyPress}
-				className="message-input"
-				disabled={!connected}
-				/>
-				<button 
-				onClick={handleSendMessage}
-				disabled={!newMessage.trim() || !connected}
-				className={`send-button ${newMessage.trim() && connected ? 'active' : 'inactive'}`}
-				>
-				<Send size={20} />
-				</button>
+						{/* Message Input */}
+						<div className="input-area">
+							<input
+								type="text"
+								placeholder="Type a message..."
+								value={newMessage}
+								onChange={(e) => setNewMessage(e.target.value)}
+								onKeyPress={handleKeyPress}
+								className="message-input"
+								disabled={!connected}
+							/>
+							<button 
+								onClick={handleSendMessage}
+								disabled={!newMessage.trim() || !connected}
+								className={`send-button ${newMessage.trim() && connected ? 'active' : 'inactive'}`}
+							>
+								<Send size={20} />
+							</button>
+						</div>
+					</>
+				) : (
+					<div className="welcome-screen">
+						<div className="welcome-content">
+							<h2 className="welcome-title">Welcome to Chat</h2>
+							<p className="welcome-subtitle">Select a conversation to start messaging</p>
+						</div>
+					</div>
+				)}
 			</div>
-			</>
-		) : (
-			<div className="welcome-screen">
-			<div className="welcome-content">
-				<h2 className="welcome-title">Welcome to Chat</h2>
-				<p className="welcome-subtitle">Select a conversation to start messaging</p>
-			</div>
-			</div>
-		)}
 		</div>
-	</div>
 	);
 };
 

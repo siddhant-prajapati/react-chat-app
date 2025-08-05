@@ -1,4 +1,4 @@
-import { Layout } from 'lucide-react'
+import Layout from '../layout/Layout'
 import HelpContentComponent from '../components/HelpContentComponent'
 
 const HelpPage = () => {

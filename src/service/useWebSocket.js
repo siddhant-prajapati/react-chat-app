@@ -18,10 +18,27 @@ export const useWebSocket = (currentUser, options = {}) => {
     const errorCallbackRef = useRef(null);
     const customMessageListenersRef = useRef(new Map());
 
-    // Message callback
+    // Message callback - handles incoming WebSocket messages
     const handleMessage = useCallback((message) => {
         console.log("📨 useWebSocket received message:", message);
-        setMessages(prev => [...prev, message]);
+        setMessages(prev => {
+            // Check for duplicates to avoid adding the same message twice
+            const isDuplicate = prev.some(existingMsg => 
+                existingMsg.message === message.message &&
+                (existingMsg.sender || existingMsg.senderUsername) === (message.sender || message.senderUsername) &&
+                (existingMsg.receiver || existingMsg.receiverUsername) === (message.receiver || message.receiverUsername) &&
+                Math.abs(new Date(existingMsg.sendTime || existingMsg.timestamp) - new Date(message.sendTime || message.timestamp)) < 1000
+            );
+            
+            if (!isDuplicate) {
+                const updated = [...prev, message];
+                console.log("✅ Message added to WebSocket state. Total messages:", updated.length);
+                return updated;
+            } else {
+                console.log("⚠️ Duplicate message detected, skipping");
+                return prev;
+            }
+        });
     }, []);
 
     // Connection callback
@@ -60,12 +77,25 @@ export const useWebSocket = (currentUser, options = {}) => {
     // Send private message
     const sendPrivateMessage = useCallback((receiverUsername, content, additionalData = {}) => {
         try {
+            // Create optimistic message for immediate UI update
+            const optimisticMessage = {
+                message: content,
+                sender: currentUser,
+                receiver: receiverUsername,
+                sendTime: new Date().toISOString(),
+                ...additionalData
+            };
+            
+            // Add to messages immediately for better UX
+            setMessages(prev => [...prev, optimisticMessage]);
+            
+            // Send via WebSocket service
             return webSocketService.sendPrivateMessage(receiverUsername, content, additionalData);
         } catch (err) {
             setError(err.message);
             throw err;
         }
-    }, []);
+    }, [currentUser]);
 
     // Send topic message
     const sendTopicMessage = useCallback((topic, content, additionalData = {}) => {
@@ -109,6 +139,34 @@ export const useWebSocket = (currentUser, options = {}) => {
         }
     }, []);
 
+    // Load initial messages (from API or other source)
+    const loadMessages = useCallback((messagesToLoad) => {
+        console.log("📥 Loading initial messages:", messagesToLoad.length);
+        setMessages(prev => {
+            // Merge with existing messages, avoiding duplicates
+            const combined = [...prev];
+            
+            messagesToLoad.forEach(newMsg => {
+                const isDuplicate = combined.some(existingMsg => 
+                    existingMsg.message === newMsg.message &&
+                    (existingMsg.sender || existingMsg.senderUsername) === (newMsg.sender || newMsg.senderUsername) &&
+                    (existingMsg.receiver || existingMsg.receiverUsername) === (newMsg.receiver || newMsg.receiverUsername) &&
+                    Math.abs(new Date(existingMsg.sendTime || existingMsg.timestamp) - new Date(newMsg.sendTime || newMsg.timestamp)) < 1000
+                );
+                
+                if (!isDuplicate) {
+                    combined.push(newMsg);
+                }
+            });
+            
+            // Sort by timestamp
+            combined.sort((a, b) => new Date(a.sendTime || a.timestamp) - new Date(b.sendTime || b.timestamp));
+            
+            console.log("📊 Total messages after loading:", combined.length);
+            return combined;
+        });
+    }, []);
+
     // Get socket instance (returns socket-like interface)
     const getSocket = useCallback(() => {
         return webSocketService.getSocket();
@@ -131,14 +189,18 @@ export const useWebSocket = (currentUser, options = {}) => {
         setMessages([]);
     }, []);
 
-    // Filter messages by receiver (like your original requirement)
+    // Filter messages by receiver
     const getMessagesByReceiver = useCallback((receiverUsername) => {
-        return messages.filter(msg => msg.receiverUsername === receiverUsername || msg.receiver === receiverUsername);
+        return messages.filter(msg => 
+            (msg.receiverUsername === receiverUsername) || (msg.receiver === receiverUsername)
+        );
     }, [messages]);
 
     // Filter messages by sender
     const getMessagesBySender = useCallback((senderUsername) => {
-        return messages.filter(msg => msg.senderUsername === senderUsername || msg.sender === senderUsername);
+        return messages.filter(msg => 
+            (msg.senderUsername === senderUsername) || (msg.sender === senderUsername)
+        );
     }, [messages]);
 
     // Get conversation between two users
@@ -200,6 +262,7 @@ export const useWebSocket = (currentUser, options = {}) => {
         
         // Messages
         messages,
+        loadMessages, // NEW: Load initial messages
         clearMessages,
         getMessagesByReceiver,
         getMessagesBySender,
