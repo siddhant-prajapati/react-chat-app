@@ -6,7 +6,7 @@ import { getMessageBetweenTwoUsers } from '../service/message.service';
 import { useWebSocket } from '../service/useWebSocket';
 import { useNavigate } from 'react-router-dom';
 
-const ChatComponent = (props) => {
+const ChatComponent = ({ loginUser, refreshTrigger }) => {
 	const [selectedUserId, setSelectedUserId] = useState(-1);
 	const [newMessage, setNewMessage] = useState("");
 	const [friends, setFriends] = useState([]);
@@ -20,10 +20,11 @@ const ChatComponent = (props) => {
 		sendPrivateMessage, 
 		connected,
 		clearMessages,
-		loadMessages // NEW: Function to load initial messages
-	} = useWebSocket(props.loginUser?.username);
+		loadMessages // Function to load initial messages
+	} = useWebSocket(loginUser?.username);
 
 	const avatarUrl = process.env.REACT_APP_IMAGE_URL;
+	const token = localStorage.getItem('token');
 
 	// Convert ISO datetime to time
 	const getFormattedTime = (isoString) => {
@@ -37,7 +38,6 @@ const ChatComponent = (props) => {
 	}
 
 	let selectedUser = friends.filter(f => f.id === selectedUserId)[0];
-	const token = localStorage.getItem('token');
 
 	// Get messages for the currently selected chat
 	const getCurrentChatMessages = () => {
@@ -51,8 +51,8 @@ const ChatComponent = (props) => {
 			// 1. Current user sent to selected user, OR
 			// 2. Selected user sent to current user
 			return (
-				(senderName === props.loginUser.username && receiverName === selectedUser.username) ||
-				(senderName === selectedUser.username && receiverName === props.loginUser.username)
+				(senderName === loginUser.username && receiverName === selectedUser.username) ||
+				(senderName === selectedUser.username && receiverName === loginUser.username)
 			);
 		});
 	};
@@ -60,10 +60,14 @@ const ChatComponent = (props) => {
 	// Get current chat messages
 	const currentChatMessages = getCurrentChatMessages();
 
-	// Set last message of each friend and load ALL past messages on component mount
-	useEffect(() => {
-		const fetchFriendsAndMessages = async () => {
-			const ufs = await getFriendsByUserId(token, props.loginUser.id, navigate);
+	// Function to fetch friends and messages
+	const fetchFriendsAndMessages = async () => {
+		if (!loginUser?.id) return;
+		
+		console.log("🔄 Fetching friends and messages...");
+		
+		try {
+			const ufs = await getFriendsByUserId(token, loginUser.id, navigate);
 			setFriends(ufs);
 			console.log("Friends loaded:", ufs.length);
 			
@@ -73,7 +77,7 @@ const ChatComponent = (props) => {
 			
 			for (const friend of ufs) {
 				try {
-					const messages = await getMessageBetweenTwoUsers(token, props.loginUser.id, friend.id);
+					const messages = await getMessageBetweenTwoUsers(token, loginUser.id, friend.id);
 					console.log(`Loaded ${messages.length} messages with friend ${friend.firstName}`);
 					
 					if (messages && messages.length > 0) {
@@ -96,12 +100,23 @@ const ChatComponent = (props) => {
 			}
 			
 			setLastMessageMap(lastMessages);
+		} catch (error) {
+			console.error("Error fetching friends:", error);
 		}
-		
-		if (props.loginUser?.id) {
+	};
+
+	// Initial load when component mounts or loginUser changes
+	useEffect(() => {
+		fetchFriendsAndMessages();
+	}, [loginUser?.id, loadMessages]);
+
+	// Refresh friends when refreshTrigger changes (when Header adds a new friend)
+	useEffect(() => {
+		if (refreshTrigger > 0) {
+			console.log("📋 Friend list refresh triggered from Header!");
 			fetchFriendsAndMessages();
 		}
-	}, [props.loginUser.id, loadMessages]);
+	}, [refreshTrigger]);
 
 	// Update last message map when allMessages changes
 	useEffect(() => {
@@ -118,8 +133,8 @@ const ChatComponent = (props) => {
 					const receiverName = msg.receiver || msg.receiverUsername;
 					
 					return (
-						(senderName === props.loginUser.username && receiverName === friend.username) ||
-						(senderName === friend.username && receiverName === props.loginUser.username)
+						(senderName === loginUser.username && receiverName === friend.username) ||
+						(senderName === friend.username && receiverName === loginUser.username)
 					);
 				});
 				
@@ -132,7 +147,7 @@ const ChatComponent = (props) => {
 			
 			setLastMessageMap(updatedLastMessages);
 		}
-	}, [allMessages, friends, props.loginUser.username]);
+	}, [allMessages, friends, loginUser.username]);
 
 	// Load initial messages when selecting a user
 	const handleUserClick = async (selectedUserId) => {
@@ -145,7 +160,7 @@ const ChatComponent = (props) => {
 			return;
 		}
 		
-		const loginUserId = props.loginUser.id;
+		const loginUserId = loginUser.id;
 		console.log(`Selected userId: ${selectedUserId}, Login userId: ${loginUserId}`);
 
 		// Check if we already have messages for this conversation in our WebSocket state
@@ -154,8 +169,8 @@ const ChatComponent = (props) => {
 			const receiverName = msg.receiver || msg.receiverUsername;
 			
 			return (
-				(senderName === props.loginUser.username && receiverName === selectedFriend.username) ||
-				(senderName === selectedFriend.username && receiverName === props.loginUser.username)
+				(senderName === loginUser.username && receiverName === selectedFriend.username) ||
+				(senderName === selectedFriend.username && receiverName === loginUser.username)
 			);
 		});
 
@@ -238,6 +253,11 @@ const ChatComponent = (props) => {
 			<div className="users-list">
 				<div className="chat-header">
 					<h2>Chats</h2>
+					{friends.length === 0 && (
+						<p style={{fontSize: '14px', color: '#666', margin: '10px 0'}}>
+							No friends yet. Add friends using the search box above!
+						</p>
+					)}
 				</div>
 				
 				<div className="users-scroll">
@@ -309,14 +329,14 @@ const ChatComponent = (props) => {
 								{currentChatMessages.map((msg, index) => (
 									<div 
 										key={index} 
-										className={`message-wrapper ${(msg.sender || msg.senderUsername) === props.loginUser.username ? 'sent' : 'received'}`}
+										className={`message-wrapper ${(msg.sender || msg.senderUsername) === loginUser.username ? 'sent' : 'received'}`}
 									>
 										<div className="message-bubble">
-											<div className={`message ${(msg.sender || msg.senderUsername) === props.loginUser.username ? 'message-sent' : 'message-received'}`}>
+											<div className={`message ${(msg.sender || msg.senderUsername) === loginUser.username ? 'message-sent' : 'message-received'}`}>
 												<p className="message-text">{msg.message}</p>
 												<p className="message-timestamp">{getFormattedTime(msg.sendTime || msg.timestamp)}</p>
 											</div>
-											<div className={`message-tail ${(msg.sender || msg.senderUsername) === props.loginUser.username ? 'tail-sent' : 'tail-received'}`}></div>
+											<div className={`message-tail ${(msg.sender || msg.senderUsername) === loginUser.username ? 'tail-sent' : 'tail-received'}`}></div>
 										</div>
 									</div>
 								))}
@@ -347,7 +367,12 @@ const ChatComponent = (props) => {
 					<div className="welcome-screen">
 						<div className="welcome-content">
 							<h2 className="welcome-title">Welcome to Chat</h2>
-							<p className="welcome-subtitle">Select a conversation to start messaging</p>
+							<p className="welcome-subtitle">
+								{friends.length === 0 
+									? "Add friends using the search box above to start chatting!" 
+									: "Select a conversation to start messaging"
+								}
+							</p>
 						</div>
 					</div>
 				)}
