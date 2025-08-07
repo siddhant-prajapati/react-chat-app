@@ -59,16 +59,20 @@ const FormComponent = () => {
             onSubmit={handleLogin}
             autoComplete="off"
             sx={{
-            display: 'grid',
-            gridTemplateColumns: { sm: '1fr' },
-            gap: 4,
-            width: '400px',
-            padding: '30px',
-            backgroundColor: '#e2e2e2',
-            borderRadius: '30px',
+                display: 'grid',
+                gridTemplateColumns: { sm: '1fr' },
+                gap: 4,
+                width: '400px',
+                padding: '30px',
+                backgroundColor: '#e2e2e2',
+                borderRadius: '30px',
             }}
         >
-            <Snackbar open={open} autoHideDuration={3000} onClose={handleClose} anchorOrigin={{vertical: 'top', horizontal: 'right'}}>
+            <Snackbar 
+                open={open} 
+                autoHideDuration={3000} 
+                onClose={handleClose} 
+                anchorOrigin={{vertical: 'top', horizontal: 'right'}}>
                 <Alert
                     onClose={handleClose}
                     severity={alertInfo.severity}
